@@ -22,6 +22,21 @@
 // instruction extentions
 // turtle graphics?
 
+const OVERRIDE_TEMPLATE = {
+    enabled: null,
+    call: null
+}
+
+const EXIT_CODES = {
+    TERMINATED: 0,
+    ERROR: 1
+}
+
+const ERROR_CODES = {
+    UNKNOWN_INSTR: 'Unknown Instruction',
+    TYPE_MISMATCH: 'Type mismatch'
+}
+
 // enumerator of the valid argtypes
 export const ARG_TYPES = {
     NONE: 0,
@@ -95,7 +110,7 @@ const VarManager = (config = defaultVarMngConfig) => {
             case '#':
                 return outputRegister[name.substring(1)] ?? null; // remove flag and read requested value, always return null otherwise
             default:
-                return null;
+                return name;
         }
     }
 
@@ -103,19 +118,86 @@ const VarManager = (config = defaultVarMngConfig) => {
     // sets var
     // returns false if name or val aren't specified
     const setVar = (name = '', val) => {
-        if (!name || !val) return false;
-        variableRegister[name.substring(1)] = val;
-        return true;
-    }
+        if (!(name || name.length === 1 || val)) {
+            config.raiseError({
+                msg: 'Cant assign variable: invalid args'
+            });
+
+            return false;
+        }
+
+        const key = name.substring(1);
+
+        if (variableRegister[key]) {
+            variableRegister[key] = val;
+            return true;
+        }
+
+        config.raiseError({
+            msg: `Can't set undefined variable: ${name}`
+        });
+
+        return false;
+    };
+
+    // check whether a variable is a valid target to write to
+    // handles errors CONDITIONALLY
+    const isValidVar = (name = '', handleError = false) => {
+        if (name.length == 1) {
+            handleError && config.raiseError({
+                msg: 'Invalid variable'
+            });
+
+            return false;
+        } else if (name[0] !== '@') {
+            handleError && config.raiseError({
+                msg: "Variables must always be prefaced with '@'"
+            });
+
+            return false;
+        }
+
+        const key = name.substring(1);
+
+        if (variableRegister[key]) {
+            return true;
+        }
+
+        return false;
+    };
+
+    // defines a variable and sets it to 'true'
+    // raises error(s)
+    const defineVar = (name = '') => {
+        if (name[0] !== '@') {
+            config.raiseError({
+                msg: "Variables must always be prefaced with '@'"
+            });
+
+            return false;
+        }
+
+        const key = name.substring(1);
+
+        if (variableRegister[key]) {
+            config.raiseError({
+                msg: 'Repeated function decleration'
+            });
+
+            return false;
+        }
+
+        variableRegister[key] = true;
+    };
 
     // converts var into number
     // raises error
-    const getVarNum = (val) =>  {
+    const resolveNumVar = (val) =>  {
         const variable = getVar(val);
 
         if (!variable) {
             config.raiseError({
-                msg: `No numeric variable defined with the name: ${val}`
+                msg: `No variable defined with the name: ${val}`
             });
 
             return null;
@@ -132,12 +214,12 @@ const VarManager = (config = defaultVarMngConfig) => {
         }
         
         return convertedVar;
-    }
+    };
 
     // converts value or var to number
     // strictly numberic
     // raises error  
-    const resolveVarOrNum = (val) => {
+    const resolveNumVarOrNum = (val) => {
         const variable = getVar(val);
 
         if (variable) {
@@ -165,23 +247,29 @@ const VarManager = (config = defaultVarMngConfig) => {
         }
         
         return convertedNum;
-    }
+    };
 
     // returns var if exists, otherwise returns val
     const resolveVal = (val) => {
         const variable = getVar(val);
-        return variable
-            ? variable
-            : val
-    }
+        if (variable) {
+            return variable;
+        }
+
+        config.raiseError({
+            msg: `Targeted register is undefined: ${val}`
+        });
+    };
 
     const showTable = () => variableRegister;
 
     return {
         setVar,
-        resolveVarOrNum,
+        defineVar,
+        resolveNumVarOrNum,
         resolveVal,
-        getVarNum,
+        resolveNumVar,
+        isValidVar,
         showTable,
         special: {
             read,
@@ -197,13 +285,22 @@ export const defaultConfig = {
     delay: 0,
     extentions: {
         functions: [{
-            call: 'FORWARD', // e.g. for turtlegraphic integration
+            key: 'FORWARD', // e.g. for turtlegraphic integration
             exec: () => null,
             argType: ARG_TYPES.SINGLE
         }],
         variables: [{
             key: 'distance'
         }]
+    },
+    overrides: {
+        // not all functions support overrides (but they should idk)k: '
+        // overrides are called at the top level of a function witch every argument being passed to the function
+        functions: [{
+            key: 'PRINT',
+            exec: () => null
+        }],
+        variables: [{}]
     }
 };
 
@@ -248,7 +345,9 @@ export const Interpreter = (config = defaultConfig) => {
     };
 
     // initializes a new varmanager object
-    const varManager = VarManager(raiseError);
+    const varManager = VarManager({
+        raiseError: raiseError
+    });
 
     // enum for different compare action for the CMP instruction
     const COMPARE = {
@@ -260,6 +359,16 @@ export const Interpreter = (config = defaultConfig) => {
         NOT: '!='
     }
 
+    // maps the table to the respective compare function for the CMP instruction
+    const compareOps = {
+        [COMPARE.EQUAL]:                (x, y) => x == y,
+        [COMPARE.GREATER]:              (x, y) => x > y,
+        [COMPARE.GREATER_OR_EQUAL]:     (x, y) => x >= y,
+        [COMPARE.NOT]:                  (x, y) => x != y,
+        [COMPARE.SMALLER]:              (x, y) => x < y,
+        [COMPARE.SMALLER_OR_EQUAL]:     (x, y) => x <= y
+    };
+
     // holds every vanilla instruction
     const INSTRUCTIONS = {
 
@@ -267,8 +376,8 @@ export const Interpreter = (config = defaultConfig) => {
         // ANTV 25 @x
         ANTV: {
             exec: (args) => {
-                const a = varManager.resolveVarOrNum(args[0]);
-                const b = varManager.getVarNum(args[1]);
+                const a = varManager.resolveNumVarOrNum(args[0]);
+                const b = varManager.resolveNumVar(args[1]);
 
                 if (!(a || b)) return;
 
@@ -284,7 +393,7 @@ export const Interpreter = (config = defaultConfig) => {
                 let output = 0;
 
                 args.forEach((e) => {
-                    const num = varManager.resolveVarOrNum(e);
+                    const num = varManager.resolveNumVarOrNum(e);
                     output -= num;
                 });
 
@@ -300,7 +409,7 @@ export const Interpreter = (config = defaultConfig) => {
                 let output = 0;
                 
                 args.forEach((e) => {
-                    const num = varManager.resolveVarOrNum(e);
+                    const num = varManager.resolveNumVarOrNum(e);
                     output += num;
                 });
                 
@@ -336,10 +445,10 @@ export const Interpreter = (config = defaultConfig) => {
                 // relative pointer adjust the execcution pointer relative from 
                 // the current position
                 if (passed) {
-                    const pointer = varManager.resolveVarOrNum(processedString);
+                    const pointer = varManager.resolveNumVarOrNum(processedString);
                     state.execPos += pointer - 1;
                 } else {
-                    const pointer = varManager.resolveVarOrNum(args[0]);
+                    const pointer = varManager.resolveNumVarOrNum(args[0]);
                     state.execPos = pointer - 1; // -1 to account for the execPos iteration each cycle
                 }
             },
@@ -359,11 +468,11 @@ export const Interpreter = (config = defaultConfig) => {
                 if (jumps) {
                     if (passed) {
                         // relative jump
-                        const pointer = varManager.resolveVarOrNum(processedString);
+                        const pointer = varManager.resolveNumVarOrNum(processedString);
                         state.execPos += pointer - 1;
                     } else {
                         // absolute jump
-                        const pointer = varManager.resolveVarOrNum(args[0]);
+                        const pointer = varManager.resolveNumVarOrNum(args[0]);
                         state.execPos = pointer - 1; // -1 to account for iteration
                     }
                 }
@@ -371,55 +480,66 @@ export const Interpreter = (config = defaultConfig) => {
             argType: ARG_TYPES.SINGLE
         },
 
+        // compares two values/variables and writes true/false
+        // to the out register under CMP
         CMP: {
             exec: (args) => {
-                // val a, operand, b
-                const [ a, o, b ] = [
-                    varManager.resolveVarOrNum(args[0]),
+                const [a, o, b] = [
+                    varManager.resolveNumVarOrNum(args[0]),
                     args[1],
-                    varManager.resolveVarOrNum(args[2])
+                    varManager.resolveNumVarOrNum(args[2])
                 ];
 
-                let result;
-
-                switch (o) {
-                    case COMPARE.EQUAL:
-                        result = a == b;
-                        break;
-                    case COMPARE.GREATER:
-                        result = a > b;
-                        break;
-                    case COMPARE.GREATER_OR_EQUAL:
-                        result = a >= b;
-                        break;
-                    case COMPARE.NOT:
-                        result = a != b;
-                        break;
-                    case COMPARE.SMALLER:
-                        result = a < b;
-                        break;
-                    case COMPARE.SMALLER_OR_EQUAL:
-                        result = a <= b;
-                        break;
+                const comparator = compareOps[o];
+                if (!comparator) {
+                    raiseError({ msg: `Unknown comparison operator: ${o}` });
+                    return;
                 }
 
+                const result = comparator(a, b);
+
                 varManager.special.write({
-                    
+                    key: 'CMP',
+                    target: varManager.special.REG_TARGETS.OUT,
+                    value: result
                 });
             },
             argType: ARG_TYPES.TRIPLE
+        },
+
+        // defines a variable and makes it usable
+        // error handling is managed through 'defineVar'
+        DEFINE: {
+            exec: (args) => {
+                varManager.defineVar(args[0]);
+            },
+            argType: ARG_TYPES.SINGLE
+        },
+
+        SET: {
+            exec: (args) => {
+                const _a = args[0];
+                const b = varManager.resolveVal(args[1]);
+
+                varManager.isValidVar(_a, true)
+                    ? varManager.setVar(_a, b)
+                    : raiseError({ msg: `Unable to update variable: ${_a}` });
+            },
+            argType: ARG_TYPES.DOUBLE
+        },
+
+        PRINT: {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
+                console.log(`[LOG START] ${args.join('\n')} [LOG END]`);
+            },
+            argType: ARG_TYPES.UNLIMITED
         }
     };
-
-    const EXIT_CODES = {
-        TERMINATED: 0,
-        ERROR: 1
-    }
-
-    const ERROR_CODES = {
-        UNKNOWN_INSTR: 'Unknown Instruction',
-        TYPE_MISMATCH: 'Type mismatch'
-    }
 
     // return new instruction object
     const createInstruction = (instr, args) => ({
@@ -427,20 +547,24 @@ export const Interpreter = (config = defaultConfig) => {
         args: args
     });
 
+    const typeByCount = {
+        0: ARG_TYPES.NONE,
+        1: ARG_TYPES.SINGLE,
+        2: ARG_TYPES.DOUBLE,
+        3: ARG_TYPES.TRIPLE,
+    };
+
     // checks for arg mismatch
     // returns either true or false
     const matchArgType = (instr, instrArgs = []) => {
         const count = instrArgs.length;
 
-        // map arg length to the corresponding type
-        const typeMap = {
-            0: ARG_TYPES.NONE,
-            1: ARG_TYPES.SINGLE,
-            2: ARG_TYPES.DOUBLE,
-            3: ARG_TYPES.TRIPLE,
-        };
+        if (instr.argType === ARG_TYPES.UNLIMITED) {
+            // unlimited = 1 or more args
+            return count > 0;
+        }
 
-        return instr.argType === ARG_TYPES.UNLIMITED || instr.argType === typeMap[count];
+        return instr.argType === typeByCount[count];
     };
 
     const processSyntax = (data = []) => {
