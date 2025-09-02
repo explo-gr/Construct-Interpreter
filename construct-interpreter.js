@@ -22,7 +22,20 @@
 // instruction extentions
 // turtle graphics?
 
-const VarManager = (raiseError = () => null) => {
+// enumerator of the valid argtypes
+export const ARG_TYPES = {
+    NONE: 0,
+    SINGLE: 1,
+    DOUBLE: 2,
+    TRIPLE: 3,
+    UNLIMITED: 4,
+};
+
+const defaultVarMngConfig = {
+    raiseError: () => null
+}
+
+const VarManager = (config = defaultVarMngConfig) => {
     // delete fehlt
 
 
@@ -32,6 +45,7 @@ const VarManager = (raiseError = () => null) => {
     // read-only
     const outputRegister = {
         MATH: 0,
+        CMD: 0,
         READ: '',
     };
 
@@ -53,6 +67,7 @@ const VarManager = (raiseError = () => null) => {
     const write = ({ target, key, value }) => {
         if (!(target || key || value)) return null;
 
+        // select target
         const targetReg = [variableRegister, outputRegister, privateRegister][target];
         targetReg[key] = value;
     }
@@ -62,6 +77,7 @@ const VarManager = (raiseError = () => null) => {
     const read = ({ target, key }) => {
         if (!(target || key)) return null;
 
+        // select target
         const targetReg = [variableRegister, outputRegister, privateRegister][target];
         return targetReg[key] ?? null;
     };
@@ -98,7 +114,7 @@ const VarManager = (raiseError = () => null) => {
         const variable = getVar(val);
 
         if (!variable) {
-            raiseError({
+            config.raiseError({
                 msg: `No numeric variable defined with the name: ${val}`
             });
 
@@ -108,7 +124,7 @@ const VarManager = (raiseError = () => null) => {
         const convertedVar = Number(variable);
 
         if (isNaN(convertedVar)) {
-            raiseError({
+            config.raiseError({
                 msg: 'Referenced Variable is not a Number'
             });
 
@@ -119,6 +135,7 @@ const VarManager = (raiseError = () => null) => {
     }
 
     // converts value or var to number
+    // strictly numberic
     // raises error  
     const resolveVarOrNum = (val) => {
         const variable = getVar(val);
@@ -127,7 +144,7 @@ const VarManager = (raiseError = () => null) => {
             const convertedVar = Number(variable);
 
             if (isNaN(convertedVar)) {
-                raiseError({
+                config.raiseError({
                     msg: 'Referenced Variable is not a Number'
                 });
 
@@ -140,8 +157,8 @@ const VarManager = (raiseError = () => null) => {
         const convertedNum = Number(val);
 
         if (isNaN(convertedNum)) {
-            raiseError({
-                msg: 'Expected Variable or Number'
+            config.raiseError({
+                msg: 'Expected numeric Variable or Number'
             });
 
             return null;
@@ -178,9 +195,19 @@ const VarManager = (raiseError = () => null) => {
 export const defaultConfig = {
     handleError: () => null,
     delay: 0,
+    extentions: {
+        functions: [{
+            call: 'FORWARD', // e.g. for turtlegraphic integration
+            exec: () => null,
+            argType: ARG_TYPES.SINGLE
+        }],
+        variables: [{
+            key: 'distance'
+        }]
+    }
 };
 
-const Interpreter = (config = defaultConfig) => {
+export const Interpreter = (config = defaultConfig) => {
 
     // tracks state during execution and holds
     // important information
@@ -195,7 +222,22 @@ const Interpreter = (config = defaultConfig) => {
             this.running = false;
             this.execPos = 0;
         }
-    }
+    };
+
+    // checks argument bracing {arg}, [arg] ...
+    // returns processed string (plain arg)
+    // used for relative "pointers"
+    const checkBracing = (key = '[]', str = '[100]') => {
+        const passed =
+            str[0] === key[0] &&
+            str[str.length - 1] === key[1];
+
+        const processedString = passed
+            ? str.substring(1, str.length - 1)
+            : null;
+
+        return { passed, processedString };
+    };
 
     // raises an error and gives a print message
     const raiseError = ({ ...args }) => {
@@ -203,23 +245,26 @@ const Interpreter = (config = defaultConfig) => {
         state.error = true;
         config.handleError(`[Line ${state.execPos}] ${msg}`, args);
         state.stop();
-    }
+    };
 
     // initializes a new varmanager object
     const varManager = VarManager(raiseError);
 
-    // enumerator of the valid argtypes
-    const ARG_TYPES = {
-        NONE: 0,
-        SINGLE: 1,
-        DOUBLE: 2,
-        UNLIMITED: 3,
-        MISC: 4,
-    };
+    // enum for different compare action for the CMP instruction
+    const COMPARE = {
+        EQUAL: '==',
+        GREATER: '>',
+        GREATER_OR_EQUAL: '>=',
+        SMALLER: '<',
+        SMALLER_OR_EQUAL: '<=',
+        NOT: '!='
+    }
 
     // holds every vanilla instruction
     const INSTRUCTIONS = {
+
         // Add number to variable
+        // ANTV 25 @x
         ANTV: {
             exec: (args) => {
                 const a = varManager.resolveVarOrNum(args[0]);
@@ -267,12 +312,17 @@ const Interpreter = (config = defaultConfig) => {
             },
             argType: ARG_TYPES.UNLIMITED
         },
+
+        // exits the program on the next iteration and
+        // resolves the promise
         EXIT: {
             exec: () => state.stop(),
             argType: ARG_TYPES.NONE
         },
+
+        // blank instruction used for empty lines
         PASS: {
-            exec: null,
+            exec: () => null,
             argType: ARG_TYPES.NONE
         },
 
@@ -280,8 +330,18 @@ const Interpreter = (config = defaultConfig) => {
         // input is either a number or num variable
         JMP: {
             exec: (args) => {
-                const pointer = varManager.resolveVarOrNum(args[0]);
-                state.execPos = pointer - 1; // -1 to account for the execPos iteration each cycle
+                const { passed, processedString } = checkBracing('[]', args[0]);
+
+                // if the bracing check passes a relative pointer is being used
+                // relative pointer adjust the execcution pointer relative from 
+                // the current position
+                if (passed) {
+                    const pointer = varManager.resolveVarOrNum(processedString);
+                    state.execPos += pointer - 1;
+                } else {
+                    const pointer = varManager.resolveVarOrNum(args[0]);
+                    state.execPos = pointer - 1; // -1 to account for the execPos iteration each cycle
+                }
             },
             argType: ARG_TYPES.SINGLE
         },
@@ -290,17 +350,64 @@ const Interpreter = (config = defaultConfig) => {
         // input is either a number or num variable
         JMP_C: {
             exec: (args) => {
-                const pointer = varManager.resolveVarOrNum(args[0]);
+                const { passed, processedString } = checkBracing('[]', args[0]);
                 const jumps = !!varManager.special.read({
                     target: varManager.special.REG_TARGETS.OUT,
                     key: 'MATH'
                 });
 
                 if (jumps) {
-                    state.execPos = pointer - 1;
+                    if (passed) {
+                        // relative jump
+                        const pointer = varManager.resolveVarOrNum(processedString);
+                        state.execPos += pointer - 1;
+                    } else {
+                        // absolute jump
+                        const pointer = varManager.resolveVarOrNum(args[0]);
+                        state.execPos = pointer - 1; // -1 to account for iteration
+                    }
                 }
             }, 
             argType: ARG_TYPES.SINGLE
+        },
+
+        CMP: {
+            exec: (args) => {
+                // val a, operand, b
+                const [ a, o, b ] = [
+                    varManager.resolveVarOrNum(args[0]),
+                    args[1],
+                    varManager.resolveVarOrNum(args[2])
+                ];
+
+                let result;
+
+                switch (o) {
+                    case COMPARE.EQUAL:
+                        result = a == b;
+                        break;
+                    case COMPARE.GREATER:
+                        result = a > b;
+                        break;
+                    case COMPARE.GREATER_OR_EQUAL:
+                        result = a >= b;
+                        break;
+                    case COMPARE.NOT:
+                        result = a != b;
+                        break;
+                    case COMPARE.SMALLER:
+                        result = a < b;
+                        break;
+                    case COMPARE.SMALLER_OR_EQUAL:
+                        result = a <= b;
+                        break;
+                }
+
+                varManager.special.write({
+                    
+                });
+            },
+            argType: ARG_TYPES.TRIPLE
         }
     };
 
@@ -321,17 +428,19 @@ const Interpreter = (config = defaultConfig) => {
     });
 
     // checks for arg mismatch
+    // returns either true or false
     const matchArgType = (instr, instrArgs = []) => {
-        switch (instrArgs.length) {
-            case 0:
-                return instr.argType === ARG_TYPES.NONE;
-            case 1:
-                return instr.argType === ARG_TYPES.SINGLE || instr.argType === ARG_TYPES.UNLIMITED;
-            case 2:
-                return instr.argType === ARG_TYPES.DOUBLE || instr.argType === ARG_TYPES.UNLIMITED;
-            default:
-                return instr.argType === ARG_TYPES.UNLIMITED;
-        }
+        const count = instrArgs.length;
+
+        // map arg length to the corresponding type
+        const typeMap = {
+            0: ARG_TYPES.NONE,
+            1: ARG_TYPES.SINGLE,
+            2: ARG_TYPES.DOUBLE,
+            3: ARG_TYPES.TRIPLE,
+        };
+
+        return instr.argType === ARG_TYPES.UNLIMITED || instr.argType === typeMap[count];
     };
 
     const processSyntax = (data = []) => {
@@ -388,6 +497,7 @@ const Interpreter = (config = defaultConfig) => {
     const setCode = (data = []) => {
         state.stop();
 
+        // validate passed data
         if (!(data && Array.isArray(data) && data.length >= 1)) {
             raiseError({
                 msg: 'Passed data contains no instructions'
@@ -395,6 +505,7 @@ const Interpreter = (config = defaultConfig) => {
             return;
         };
 
+        // process the received syntax and check if it's executable
         processSyntax(data);
     };
 
@@ -435,5 +546,3 @@ const Interpreter = (config = defaultConfig) => {
 
     return { setCode, startExecution }
 }
-
-export default Interpreter;
