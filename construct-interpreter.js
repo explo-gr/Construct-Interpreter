@@ -25,17 +25,17 @@
 const OVERRIDE_TEMPLATE = {
     enabled: null,
     call: null
-}
+};
 
 const EXIT_CODES = {
     TERMINATED: 0,
     ERROR: 1
-}
+};
 
 const ERROR_CODES = {
     UNKNOWN_INSTR: 'Unknown Instruction',
     TYPE_MISMATCH: 'Type mismatch'
-}
+};
 
 // enumerator of the valid argtypes
 export const ARG_TYPES = {
@@ -46,13 +46,62 @@ export const ARG_TYPES = {
     UNLIMITED: 4,
 };
 
-const defaultVarMngConfig = {
-    raiseError: () => null
+// enum for different compare action for the CMP instruction
+const COMPARE = {
+    EQUAL: '==',
+    GREATER: '>',
+    GREATER_OR_EQUAL: '>=',
+    SMALLER: '<',
+    SMALLER_OR_EQUAL: '<=',
+    NOT: '!='
 }
+
+export const INSTR_NAME = {
+    ADD_NUMBER_TO_VARIABLE: 'ANTV',
+    SUBTRACT: 'SUB',
+    ADD: 'ADD',
+    EXIT: 'EXIT',
+    PASS: 'PASS',
+    JUMP: 'JMP',
+    JUMP_CONDITION: 'JMP_C',
+    COMPARE: 'CMP',
+    DEFINE: 'DEFINE', 
+    SET: 'SET', 
+    PRINT: 'PRINT', 
+    INPUT: 'INPUT',
+    FUNCTION: 'FUNC', 
+    RETURN: 'RETURN', 
+    CALL: 'CALL'
+}
+
+export const defaultVarMngConfig = {
+    raiseError: () => null
+    // overrides
+};
+
+export const defaultFnMngConfig = {
+    raiseError: () => null
+    // overrides
+};
+
+const FunctionManager = (config = defaultFnMngConfig) => {
+    const funtionConfig = {
+        line: 0,
+    };
+
+    const checkFlag = () => null;
+
+    const defineFn = () => null;
+    const callFn = () => null;
+
+    // functions
+    const funtionRegister = {
+        a: 'a'
+    };
+};
 
 const VarManager = (config = defaultVarMngConfig) => {
     // delete fehlt
-
 
     // read-write
     const variableRegister = {};
@@ -277,7 +326,7 @@ const VarManager = (config = defaultVarMngConfig) => {
             REG_TARGETS
         }
     }
-}
+};
 
 // default config for the interpretor
 export const defaultConfig = {
@@ -297,7 +346,7 @@ export const defaultConfig = {
         // not all functions support overrides (but they should idk)k: '
         // overrides are called at the top level of a function witch every argument being passed to the function
         functions: [{
-            key: 'PRINT',
+            instruction: 'PRINT',
             exec: () => null
         }],
         variables: [{}]
@@ -317,6 +366,8 @@ export const Interpreter = (config = defaultConfig) => {
         running: false,
         error: false,
         execPos: 1,
+
+        returnLine: null,
 
         stop: function () {
             this.running = false;
@@ -352,16 +403,6 @@ export const Interpreter = (config = defaultConfig) => {
         raiseError: raiseError
     });
 
-    // enum for different compare action for the CMP instruction
-    const COMPARE = {
-        EQUAL: '==',
-        GREATER: '>',
-        GREATER_OR_EQUAL: '>=',
-        SMALLER: '<',
-        SMALLER_OR_EQUAL: '<=',
-        NOT: '!='
-    }
-
     // maps the table to the respective compare function for the CMP instruction
     const compareOps = {
         [COMPARE.EQUAL]:                (x, y) => x == y,
@@ -377,7 +418,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // Add number to variable
         // ANTV 25 @x
-        ANTV: {
+        [INSTR_NAME.ADD_NUMBER_TO_VARIABLE]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -396,7 +437,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // Subtract and output to the math register
         // Subtracts list of args, either num or var
-        SUB: {
+        [INSTR_NAME.SUBTRACT]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -417,7 +458,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // Add and output to the math register
         // Adds up list of args, either num or var
-        ADD: {
+        [INSTR_NAME.ADD]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -440,9 +481,27 @@ export const Interpreter = (config = defaultConfig) => {
             argType: ARG_TYPES.UNLIMITED
         },
 
+        [INSTR_NAME.INPUT]: {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
+                const input = prompt(`[INPUT] ${args.join(' ')}`, '');
+
+                varManager.special.write({
+                    target: varManager.special.REG_TARGETS.OUT,
+                    key: 'INPUT',
+                    value: input
+                })
+            },
+            argType: ARG_TYPES.UNLIMITED
+        },
+
         // exits the program on the next iteration and
         // resolves the promise
-        EXIT: {
+        [INSTR_NAME.EXIT]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function () {
                 if (this.override.enabled) {
@@ -455,7 +514,7 @@ export const Interpreter = (config = defaultConfig) => {
         },
 
         // blank instruction used for empty lines
-        PASS: {
+        [INSTR_NAME.PASS]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function () {
                 if (this.override.enabled) {
@@ -469,7 +528,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // Jumps to the specified line
         // input is either a number or num variable
-        JMP: {
+        [INSTR_NAME.JUMP]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -494,7 +553,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // Jumps to the specified line if math_out is truthy
         // input is either a number or num variable
-        JMP_C: {
+        [INSTR_NAME.JUMP_CONDITION]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -524,7 +583,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // compares two values/variables and writes true/false
         // to the out register under CMP
-        CMP: {
+        [INSTR_NAME.COMPARE]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -556,7 +615,7 @@ export const Interpreter = (config = defaultConfig) => {
 
         // defines a variable and makes it usable
         // error handling is managed through 'defineVar'
-        DEFINE: {
+        [INSTR_NAME.DEFINE]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -568,7 +627,7 @@ export const Interpreter = (config = defaultConfig) => {
             argType: ARG_TYPES.SINGLE
         },
 
-        SET: {
+        [INSTR_NAME.SET]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -585,7 +644,7 @@ export const Interpreter = (config = defaultConfig) => {
             argType: ARG_TYPES.DOUBLE
         },
 
-        PRINT: {
+        [INSTR_NAME.PRINT]: {
             override: { ...OVERRIDE_TEMPLATE },
             exec: function (args) {
                 if (this.override.enabled) {
@@ -595,14 +654,43 @@ export const Interpreter = (config = defaultConfig) => {
                 console.log(`[LOG START] ${args.join('\n')} [LOG END]`);
             },
             argType: ARG_TYPES.UNLIMITED
-        }
+        },
+
+        [INSTR_NAME.DEFINE]: {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
+                if (state.returnLine === null) {
+                    return
+                } else {
+                    state.execPos = state.returnLine;
+                }
+            },
+            argType: ARG_TYPES.NONE
+        },
+
+        [INSTR_NAME.RETURN]: {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
+                if (state.)
+            },
+            argType: ARG_TYPES.RETURN
+        },
+        CALL : {}
     };
 
     // custom funtion have to be added before calling this
     // appends customs overrides
-    for (const { exec, key } of config.overrides.functions) {
+    for (const { exec, instruction } of config.overrides.functions) {
         if (typeof exec === 'function' && INSTRUCTIONS[key]) {
-            INSTRUCTIONS[key].override = {
+            INSTRUCTIONS[instruction].override = {
                 enabled: true,
                 call: exec
             }
@@ -741,4 +829,4 @@ export const Interpreter = (config = defaultConfig) => {
     }
 
     return { setCode, startExecution }
-}
+};
