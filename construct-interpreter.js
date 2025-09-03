@@ -310,6 +310,9 @@ export const Interpreter = (config = defaultConfig) => {
     // important information
     const state = {
         instructionArr: [],
+
+        configError: false,
+
         executable: false,
         running: false,
         error: false,
@@ -375,7 +378,12 @@ export const Interpreter = (config = defaultConfig) => {
         // Add number to variable
         // ANTV 25 @x
         ANTV: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 const a = varManager.resolveNumVarOrNum(args[0]);
                 const b = varManager.resolveNumVar(args[1]);
 
@@ -389,7 +397,12 @@ export const Interpreter = (config = defaultConfig) => {
         // Subtract and output to the math register
         // Subtracts list of args, either num or var
         SUB: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 let output = 0;
 
                 args.forEach((e) => {
@@ -405,7 +418,12 @@ export const Interpreter = (config = defaultConfig) => {
         // Add and output to the math register
         // Adds up list of args, either num or var
         ADD: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 let output = 0;
                 
                 args.forEach((e) => {
@@ -425,20 +443,39 @@ export const Interpreter = (config = defaultConfig) => {
         // exits the program on the next iteration and
         // resolves the promise
         EXIT: {
-            exec: () => state.stop(),
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function () {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
+                state.stop()
+            },
             argType: ARG_TYPES.NONE
         },
 
         // blank instruction used for empty lines
         PASS: {
-            exec: () => null,
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function () {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
+                return null;
+            },
             argType: ARG_TYPES.NONE
         },
 
         // Jumps to the specified line
         // input is either a number or num variable
         JMP: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 const { passed, processedString } = checkBracing('[]', args[0]);
 
                 // if the bracing check passes a relative pointer is being used
@@ -458,7 +495,12 @@ export const Interpreter = (config = defaultConfig) => {
         // Jumps to the specified line if math_out is truthy
         // input is either a number or num variable
         JMP_C: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 const { passed, processedString } = checkBracing('[]', args[0]);
                 const jumps = !!varManager.special.read({
                     target: varManager.special.REG_TARGETS.OUT,
@@ -483,7 +525,12 @@ export const Interpreter = (config = defaultConfig) => {
         // compares two values/variables and writes true/false
         // to the out register under CMP
         CMP: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 const [a, o, b] = [
                     varManager.resolveNumVarOrNum(args[0]),
                     args[1],
@@ -510,14 +557,24 @@ export const Interpreter = (config = defaultConfig) => {
         // defines a variable and makes it usable
         // error handling is managed through 'defineVar'
         DEFINE: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 varManager.defineVar(args[0]);
             },
             argType: ARG_TYPES.SINGLE
         },
 
         SET: {
-            exec: (args) => {
+            override: { ...OVERRIDE_TEMPLATE },
+            exec: function (args) {
+                if (this.override.enabled) {
+                    this.override.call(args);
+                }
+
                 const _a = args[0];
                 const b = varManager.resolveVal(args[1]);
 
@@ -540,6 +597,21 @@ export const Interpreter = (config = defaultConfig) => {
             argType: ARG_TYPES.UNLIMITED
         }
     };
+
+    // custom funtion have to be added before calling this
+    // appends customs overrides
+    for (const { exec, key } of config.overrides.functions) {
+        if (typeof exec === 'function' && INSTRUCTIONS[key]) {
+            INSTRUCTIONS[key].override = {
+                enabled: true,
+                call: exec
+            }
+        } else {
+            config.handleError(`Error(s) found in override config: ${key}`);
+            state.configError = true;
+        }
+        INSTRUCTIONS[key]
+    }
 
     // return new instruction object
     const createInstruction = (instr, args) => ({
@@ -634,7 +706,7 @@ export const Interpreter = (config = defaultConfig) => {
     };
 
     const startExecution = () => {
-        if (state.running) return;
+        if (state.running || state.configError) return;
         state.error = false;
 
         const runtime = new Promise((resolve, reject) => {
